@@ -5,9 +5,9 @@ the guess.
 
 While playing, you need to type the hints received from Wordle. The colors are
 translated to characters according to this mapping:
-    ⬜ (GRAY)   -> .
-    🟨 (YELLOW) -> ?
-    🟩 (GREEN)  -> *
+    GRAY   -> .
+    YELLOW -> ?
+    GREEN  -> *
 
 When playing for the first time, a matrix of all possible hints is computed and
 saved to the disk. This may take a lot of time (depending on your hardware).
@@ -15,11 +15,11 @@ saved to the disk. This may take a lot of time (depending on your hardware).
 Command like example:
     $ python play_wordle.py
     > Guess 1: tares
-    > Hint 1:  **...  # 🟩🟩⬜⬜⬜
-    > Guess 2: kylin
-    > Hint 2:  .?..?  # ⬜🟨⬜⬜🟨
-    > Guess 3: acing
-    > Hint 3:  ?..??  # 🟨⬜⬜🟨🟨
+    > Hint 1:  **...
+    > Guess 2: kyli
+    > Hint 2:  .?..?
+    > Guess 3: acin
+    > Hint 3:  ?..??
     > Break 4: tangy
 
     $ python play_wordle.py --evalute --report-progress
@@ -58,9 +58,9 @@ except ImportError:
 
 _WORD_LENGTH = 5
 _PERFECT_MATCH = 242
-_HINT_NOT_IN_ANY_SPOT = '.'  # ⬜
-_HINT_WRONG_SPOT = '?'  # 🟨
-_HINT_CORRECT_SPOT = '*'  # 🟩
+_HINT_NOT_IN_ANY_SPOT = '.'
+_HINT_WRONG_SPOT = '?'
+_HINT_CORRECT_SPOT = '*'
 
 CharType = nb.types.UnicodeCharSeq(1)
 WordType = nb.types.unicode_type
@@ -68,7 +68,7 @@ WordType = nb.types.unicode_type
 warnings.filterwarnings("ignore")
 
 
-@nb.njit(nb.uint8(WordType, WordType))
+@nb.njit([nb.uint8(WordType, WordType), nb.uint8(nb.types.UnicodeCharSeq(5), nb.types.UnicodeCharSeq(5))])
 def compute_hint(guess: str, secret: str) -> int:
     """Computes the hint to be recieved for a guess given a secret.
 
@@ -104,7 +104,9 @@ def compute_hint(guess: str, secret: str) -> int:
     return hint
 
 
-@nb.njit(nb.uint8[:, :](WordType[:], WordType[:]), parallel=True)
+@nb.njit([nb.uint8[:,:](WordType[:], WordType[:]),
+          nb.uint8[:,:](nb.types.UnicodeCharSeq(5)[:], nb.types.UnicodeCharSeq(5)[:])],
+         parallel=True)
 def compute_all_hints(list_of_guess_words: np.ndarray,
                       list_of_secret_words: np.ndarray) -> np.ndarray:
     """Computes the hints of all guesses given and for all secrets.

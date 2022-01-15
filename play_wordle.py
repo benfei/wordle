@@ -149,7 +149,10 @@ def compute_entropy_gain(hints_of_guess: np.ndarray) -> float:
         counter[hint] += 1
     hist = counter.astype(np.float32)
     hist /= hints_of_guess.size
-    return -(hist * np.log(hist.clip(1e-7, 1))).sum()
+    entropy_gain = -(hist * np.log(hist.clip(1e-7, 1))).sum()
+    if counter[_PERFECT_MATCH] > 0:  # Break ties by selecting feasible word
+        entropy_gain += 1e-6
+    return entropy_gain
 
 
 @nb.njit(nb.float32[:](nb.uint8[:, :]), parallel=True)
@@ -171,8 +174,46 @@ def compute_entropy_gain_per_guess(hints: np.ndarray) -> np.ndarray:
     return scores
 
 
-@nb.njit(nb.int32(nb.uint8[:, :]))
-def find_best_guess(hints: np.ndarray) -> int:
+@nb.njit(nb.float32(nb.uint8[:]))
+def compute_max_size(hints_of_guess: np.ndarray) -> float:
+    """Computes the size of the maximum remaining set of words.
+
+    Args:
+        hints_of_guess: A 1D array of the hints to be recieved by guessing
+            a specific guess word, for remaining secret words.
+
+    Returns:
+        The size of the maximum set of remaining words after guessing the word.
+    """
+    if hints_of_guess.size < 1:
+        raise ValueError('arr should be non-empty.')
+    counter = np.zeros(shape=(_PERFECT_MATCH + 1,), dtype=np.int32)
+    for hint in hints_of_guess:
+        counter[hint] += 1
+    return -float(np.max(counter))
+
+
+@nb.njit(nb.float32[:](nb.uint8[:, :]), parallel=True)
+def compute_max_size_per_guess(hints: np.ndarray) -> np.ndarray:
+    """Computes the size of the maximum remaining set of all guess words.
+
+    Args:
+        hints: A 2D array of the hints for all guesses and for all the
+            remaining secret words.
+
+    Returns:
+        A 1D array of the maximum set size per guess word.
+    """
+
+    num_guess_words = hints.shape[0]
+    scores = np.zeros(shape=(num_guess_words,), dtype=np.float32)
+    for i in nb.prange(num_guess_words):
+        scores[i] = compute_max_size(hints[i])
+    return scores
+
+
+@nb.njit(nb.int32(nb.uint8[:, :], nb.boolean))
+def find_best_guess(hints: np.ndarray, worst_case: bool = False) -> int:
     """Finds the guess word which maximizes entropy gain.
 
     Args:
@@ -183,7 +224,10 @@ def find_best_guess(hints: np.ndarray) -> int:
         The index of the best word to guess, i.e. the guess word with maximum
         entropy gain.
     """
-    scores = compute_entropy_gain_per_guess(hints)
+    if worst_case:
+        scores = compute_max_size_per_guess(hints)
+    else:
+        scores = compute_entropy_gain_per_guess(hints)
     return np.argmax(scores)  # Maximize score
 
 
@@ -249,7 +293,8 @@ def play(list_of_guess_words: Sequence[str],
          list_of_secret_words: Sequence[str],
          hints: Optional[np.ndarray] = None,
          secret_word: Optional[str] = None,
-         hard_mode: bool = False):
+         hard_mode: bool = False,
+         worst_case: bool = False):
     """Plays a single game of Wordle.
 
     Args:
@@ -294,7 +339,7 @@ def play(list_of_guess_words: Sequence[str],
         if len(list_of_secret_words) <= 1:
             print(f'Break {guess_number}:', list_of_secret_words[0])
             break
-        guess_index = find_best_guess(hints)
+        guess_index = find_best_guess(hints, worst_case)
         guess_word = list_of_guess_words[guess_index]
         print(f'Guess {guess_number}:', guess_word)
 
@@ -321,14 +366,15 @@ def _evalute(
         list_of_secret_words: Sequence[str],
         hints: np.ndarray,
         secret_word: str,
-        hard_mode: bool = False) -> int:
+        hard_mode: bool = False,
+        worst_case: bool = False) -> int:
     guess_number = 0
     hint = 0
     while hint != _PERFECT_MATCH:
         guess_number += 1
         if len(list_of_secret_words) <= 1:
             break
-        guess_index = find_best_guess(hints)
+        guess_index = find_best_guess(hints, worst_case)
         guess_word = list_of_guess_words[guess_index]
         hint = compute_hint(guess_word, secret_word)
         valid_words = hints[guess_index, :] == hint
@@ -346,6 +392,7 @@ def evaluate(
         list_of_secret_words: Sequence[str],
         hints: Optional[np.ndarray] = None,
         hard_mode: bool = False,
+        worst_case: bool = False,
         report_progress: bool = False) -> np.ndarray:
     list_of_guess_words = np.asarray(list_of_guess_words)
     list_of_secret_words = np.asarray(list_of_secret_words)
@@ -374,7 +421,7 @@ def evaluate(
         iterate_over_secret_words = tqdm.tqdm(iterate_over_secret_words)
     for secret_word in iterate_over_secret_words:
         round_length = _evalute(list_of_guess_words, list_of_secret_words,
-                                hints, secret_word, hard_mode)
+                                hints, secret_word, hard_mode, worst_case)
         counter[round_length] = counter.get(round_length, 0) + 1
     
     histogram = np.zeros(shape=(max(counter) + 1,), dtype=np.int32)
@@ -385,13 +432,13 @@ def evaluate(
 
 
 def display_histogram(histogram):
-    histogram = 100. * (histogram.astype(np.float32) / histogram.sum())
-    fmt = '{i:%dd}: {bar:<10s} {p:.4f}%%' % (len(str(len(histogram) - 1)),)
-    for i, p in enumerate(histogram):
+    probs = 100. * (histogram.astype(np.float32) / histogram.sum())
+    fmt = '{i:%dd}: {bar:<10s} {p:.3f}%% ({h:d})' % (len(str(len(histogram) - 1)),)
+    for i, (h, p) in enumerate(zip(histogram, probs)):
         bar = '#' * round(p / 10)
         if p > round(p / 10):
             bar += '.'
-        print(fmt.format(i=i, bar=bar, p=p))
+        print(fmt.format(i=i, bar=bar, p=p, h=h))
 
 
 def main():
@@ -402,6 +449,8 @@ def main():
                         type=str, help='Path to precomputed hints.')
     parser.add_argument('--hard-mode', action='store_true',
                         help='Whether to play in hard mode.')
+    parser.add_argument('--worst-case', action='store_true',
+                        help='Whether to play against adversarial player.')
     parser.add_argument('--secret-word', type=str,
                         help='Secret word for self-play.')
     parser.add_argument('--evaluate', action='store_true')
@@ -425,7 +474,9 @@ def main():
     if args.evaluate:
         list_of_words = list_of_words
         hints = hints
-        histogram = evaluate(list_of_words, list_of_words, hints, args.hard_mode,
+        histogram = evaluate(list_of_words, list_of_words, hints,
+                             hard_mode=args.hard_mode,
+                             worst_case=args.worst_case,
                              report_progress=args.report_progress)
         display_histogram(histogram)
     
@@ -434,7 +485,8 @@ def main():
             args.secret_word = np.random.choice(list_of_words)
 
         play(list_of_words, list_of_words, hints=hints,
-            secret_word=args.secret_word, hard_mode=args.hard_mode)
+             secret_word=args.secret_word, hard_mode=args.hard_mode,
+             worst_case=args.worst_case)
 
 
 if __name__ == '__main__':

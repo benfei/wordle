@@ -94,12 +94,12 @@ def compute_hint(guess: str, secret: str) -> int:
 
     hint: nb.uint8 = 0
     for i in range(_WORD_LENGTH):
-        hint *= 3
         if guess[i] == secret[i]:
-            hint += 2
+            hint += 2 * 3 ** (_WORD_LENGTH - 1 - i)
             char_counter[guess[i]] -= 1
-        elif guess[i] in char_counter and char_counter[guess[i]] > 0:
-            hint += 1
+    for i in range(_WORD_LENGTH):
+        if guess[i] != secret[i] and guess[i] in char_counter and char_counter[guess[i]] > 0:
+            hint += 1 * 3 ** (_WORD_LENGTH - 1 - i)
             char_counter[guess[i]] -= 1
     return hint
 

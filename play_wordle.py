@@ -447,6 +447,7 @@ def main():
                         type=str, help='Path to list of words.')
     parser.add_argument('--precomputed-hints-file', default='./wordle-precomputed.npz',
                         type=str, help='Path to precomputed hints.')
+    parser.add_argument('--no-precomputed-hints-file', action='store_true')
     parser.add_argument('--hard-mode', action='store_true',
                         help='Whether to play in hard mode.')
     parser.add_argument('--worst-case', action='store_true',
@@ -457,7 +458,14 @@ def main():
     parser.add_argument('--report-progress', action='store_true')
 
     args = parser.parse_args()
-    if not os.path.exists(args.precomputed_hints_file):
+    if args.no_precomputed_hints_file:
+        print('Computing all hints. This may take a few minutes.')
+        with open(args.words_file, 'r') as f:
+            list_of_words = [word.strip()
+                             for word in f.readlines() if word.strip()]
+        list_of_words = np.asarray(list_of_words)
+        hints = compute_all_hints(list_of_words, list_of_words)
+    elif not os.path.exists(args.precomputed_hints_file):
         print('Computing all hints. This may take a few minutes.')
         with open(args.words_file, 'r') as f:
             list_of_words = [word.strip()
